@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import api, { apiErrorMessage } from "../api";
 import { STATUS_LABELS } from "../statusLabels";
+import { formatDateTime } from "../formatDate";
 
 export default function Dashboard() {
   const [kaizens, setKaizens] = useState([]);
@@ -88,7 +89,7 @@ export default function Dashboard() {
               {k.admin_comment && (
                 <div className="alert alert-info small">Комментарий администратора: {k.admin_comment}</div>
               )}
-              <div className="muted small">Создано: {k.created_at}</div>
+              <div className="muted small">Создано: {formatDateTime(k.created_at)}</div>
             </li>
           ))}
         </ul>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import api, { apiErrorMessage } from "../api";
 import { STATUS_LABELS, STATUS_ORDER } from "../statusLabels";
+import { formatDateTime } from "../formatDate";
 
 export default function AdminKaizens() {
   const [kaizens, setKaizens] = useState([]);
@@ -39,7 +40,7 @@ export default function AdminKaizens() {
             </div>
             <div className="muted small">
               Автор: {k.author?.full_name} (@{k.author?.login}) · Отдел: {k.department?.name || "—"} · Создано:{" "}
-              {k.created_at}
+              {formatDateTime(k.created_at)}
             </div>
             {k.category && <div className="muted small">Категория: {k.category}</div>}
             <p>{k.description}</p>
@@ -66,7 +67,7 @@ export default function AdminKaizens() {
                 <ul>
                   {k.history.map((h) => (
                     <li key={h.id}>
-                      {h.changed_at}: {STATUS_LABELS[h.status]} {h.comment ? `— ${h.comment}` : ""}
+                      {formatDateTime(h.changed_at)}: {STATUS_LABELS[h.status]} {h.comment ? `— ${h.comment}` : ""}
                     </li>
                   ))}
                 </ul>

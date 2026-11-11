@@ -63,8 +63,12 @@ export default function AdminUsers() {
     if (!pass) return;
     act(() => api.post(`/users/${id}/reset-password`, { new_password: pass }));
   };
-  const reassign = (u, department_id, position_id) =>
-    act(() => api.put(`/users/${u.id}`, { department_id: Number(department_id), position_id: Number(position_id) }));
+  // Empty selection => null (clear). Changing the department clears the position on the server,
+  // because a position belongs to exactly one department.
+  const changeDepartment = (u, value) =>
+    act(() => api.put(`/users/${u.id}`, { department_id: value ? Number(value) : null, position_id: null }));
+  const changePosition = (u, value) =>
+    act(() => api.put(`/users/${u.id}`, { position_id: value ? Number(value) : null }));
 
   const openPermEditor = (u) => {
     setOpenPerms(openPerms === u.id ? null : u.id);
@@ -111,7 +115,7 @@ export default function AdminUsers() {
                   <td>{u.full_name}</td>
                   <td>@{u.login}</td>
                   <td>
-                    <select value={u.department_id || ""} onChange={(e) => reassign(u, e.target.value, u.position_id || "")}>
+                    <select value={u.department_id || ""} onChange={(e) => changeDepartment(u, e.target.value)}>
                       <option value="">—</option>
                       {departments.map((d) => (
                         <option key={d.id} value={d.id}>
@@ -119,7 +123,7 @@ export default function AdminUsers() {
                         </option>
                       ))}
                     </select>
-                    <select value={u.position_id || ""} onChange={(e) => reassign(u, u.department_id || "", e.target.value)}>
+                    <select value={u.position_id || ""} onChange={(e) => changePosition(u, e.target.value)}>
                       <option value="">—</option>
                       {flatPositions.map((p) => (
                         <option key={p.id} value={p.id}>
