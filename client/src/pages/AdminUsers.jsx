@@ -1,210 +1,198 @@
-import { Fragment, useEffect, useState } from "react";
-import api, { apiErrorMessage } from "../api";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import api from "../api";
 import { useAuth } from "../context/AuthContext";
-import { buildTreeFromFlat, flattenTree, indentLabel } from "../positionTree";
+import { useI18n } from "../i18n";
+import { formatDateTime } from "../formatDate";
 
-const STATUS_LABELS = { pending: "Ожидает", approved: "Подтверждён", rejected: "Отклонён", disabled: "Отключён" };
+const PERMS = ["manage_structure", "manage_users", "manage_admins", "manage_kaizens", "view_kaizens"];
 
-const PERMISSIONS = [
-  { key: "perm_manage_structure", label: "Структура компании" },
-  { key: "perm_manage_users", label: "Пользователи" },
-  { key: "perm_manage_admins", label: "Назначение прав" },
-  { key: "perm_approve_any", label: "Подтверждать любые заявки" },
-  { key: "perm_manage_kaizens", label: "Все кайдзен-предложения" },
-];
-
-export default function AdminUsers() {
-  const { user: me } = useAuth();
-  const [users, setUsers] = useState([]);
-  const [departments, setDepartments] = useState([]);
-  const [positions, setPositions] = useState([]);
-  const [filter, setFilter] = useState("");
-  const [error, setError] = useState("");
-  const [openPerms, setOpenPerms] = useState(null); // user id currently editing permissions
-  const [roleTitleDraft, setRoleTitleDraft] = useState("");
-
-  const load = () => {
-    const params = filter ? { status: filter } : {};
-    Promise.all([
-      api.get("/users", { params }),
-      api.get("/structure/departments"),
-      api.get("/structure/positions"),
-    ])
-      .then(([u, d, p]) => {
-        setUsers(u.data.users);
-        setDepartments(d.data.departments);
-        setPositions(p.data.positions);
-      })
-      .catch((err) => setError(apiErrorMessage(err)));
-  };
-
-  useEffect(load, [filter]);
-
-  const act = async (fn) => {
-    setError("");
+function CodeBox({ issued, t, lang, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
     try {
-      await fn();
-      load();
+      await navigator.clipboard.writeText(issued.activation_code);
+      setCopied(true);
+    } catch {
+      /* clipboard blocked: the code is visible anyway */
+    }
+  };
+  return (
+    <div className="alert alert-success code-box" role="status">
+      <strong>{t("users.createdTitle")}: {issued.user.full_name} (№{issued.user.tabel_number})</strong>
+      <div className="code mono">{issued.activation_code}</div>
+      <div className="small">{t("users.codeNote", { date: formatDateTime(issued.activation_expires_at, lang) })}</div>
+      <div className="row">
+        <button className="btn" onClick={copy}>{copied ? t("common.copied") : t("common.copy")}</button>
+        <button className="btn btn-ghost" onClick={onClose}>{t("common.close")}</button>
+      </div>
+    </div>
+  );
+}
+
+function UserRow({ u, me, departments, t, onChanged, onError, onIssued }) {
+  const [edit, setEdit] = useState(null);
+  const canPerms = me.is_super_admin || me.perm_manage_admins;
+  const canUsers = me.is_super_admin || me.perm_manage_users;
+  const call = async (fn) => {
+    onError("");
+    try {
+      const res = await fn();
+      await onChanged();
+      return res;
     } catch (err) {
-      setError(apiErrorMessage(err));
+      onError(err);
     }
   };
 
-  const approve = (id) => act(() => api.post(`/users/${id}/approve`));
-  const reject = (id) => act(() => api.post(`/users/${id}/reject`, { reason: window.prompt("Причина отклонения:") || "" }));
-  const toggleDisabled = (u) =>
-    act(() => api.put(`/users/${u.id}`, { status: u.status === "disabled" ? "approved" : "disabled" }));
-  const removeUser = (id) => {
-    if (!window.confirm("Удалить пользователя безвозвратно?")) return;
-    act(() => api.delete(`/users/${id}`));
-  };
-  const resetPassword = (id) => {
-    const pass = window.prompt("Новый пароль (мин. 6 символов):");
-    if (!pass) return;
-    act(() => api.post(`/users/${id}/reset-password`, { new_password: pass }));
-  };
-  // Empty selection => null (clear). Changing the department clears the position on the server,
-  // because a position belongs to exactly one department.
-  const changeDepartment = (u, value) =>
-    act(() => api.put(`/users/${u.id}`, { department_id: value ? Number(value) : null, position_id: null }));
-  const changePosition = (u, value) =>
-    act(() => api.put(`/users/${u.id}`, { position_id: value ? Number(value) : null }));
+  return (
+    <li className="item">
+      <div className="item-head">
+        <div>
+          <span className="tabel">№{u.tabel_number}</span> <strong>{u.full_name}</strong>
+          <div className="muted small">{u.post_title || t("common.none")} · {u.department?.name || t("common.none")}</div>
+        </div>
+        <div className="row">
+          {u.needs_activation && <span className="pill pill-in_review">{t("users.badge.needsActivation")}</span>}
+          {u.status === "disabled" && <span className="pill pill-rejected">{t("users.badge.disabled")}</span>}
+          {u.is_super_admin ? <span className="badge">{t("role.superAdmin")}</span> : u.role_title && <span className="badge">{u.role_title}</span>}
+        </div>
+      </div>
+      {canUsers && (
+        <div className="row actions">
+          <button className="btn btn-sm" onClick={() => setEdit(edit ? null : { tabel_number: String(u.tabel_number), full_name: u.full_name, post_title: u.post_title || "", department_id: u.department_id })}>{t("common.edit")}</button>
+          <Link className="btn btn-sm" to={`/team?owner=${u.id}`}>{t("users.team")}</Link>
+          {u.status === "active" && (
+            <button className="btn btn-sm" onClick={async () => {
+              if (!window.confirm(t("users.newCodeConfirm"))) return;
+              const res = await call(() => api.post(`/users/${u.id}/activation-code`));
+              if (res) onIssued(res.data);
+            }}>{t("users.newCode")}</button>
+          )}
+          {u.id !== me.id && <button className="btn btn-sm" onClick={() => call(() => api.put(`/users/${u.id}`, { status: u.status === "active" ? "disabled" : "active" }))}>{u.status === "active" ? t("users.disable") : t("users.enable")}</button>}
+          {u.id !== me.id && <button className="btn btn-sm btn-danger" onClick={() => window.confirm(t("common.confirmDelete")) && call(() => api.delete(`/users/${u.id}`))}>{t("common.delete")}</button>}
+        </div>
+      )}
+      {edit && (
+        <div className="edit-box">
+          <div className="row">
+            <input aria-label={t("common.tabel")} inputMode="numeric" className="narrow-input" value={edit.tabel_number} onChange={(e) => setEdit({ ...edit, tabel_number: e.target.value })} />
+            <input aria-label={t("common.fullName")} value={edit.full_name} onChange={(e) => setEdit({ ...edit, full_name: e.target.value })} />
+            <input aria-label={t("common.post")} value={edit.post_title} onChange={(e) => setEdit({ ...edit, post_title: e.target.value })} />
+            <select aria-label={t("common.department")} value={edit.department_id ?? ""} onChange={(e) => setEdit({ ...edit, department_id: e.target.value ? Number(e.target.value) : null })}>
+              <option value="">{t("common.none")}</option>
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+            <button className="btn btn-primary" onClick={async () => { const r = await call(() => api.put(`/users/${u.id}`, edit)); if (r) setEdit(null); }}>{t("common.save")}</button>
+          </div>
+        </div>
+      )}
+      {canPerms && (
+        <details className="perms">
+          <summary>{t("users.permissions")}</summary>
+          <div className="perm-grid">
+            {me.is_super_admin && (
+              <label className="check"><input type="checkbox" checked={!!u.is_super_admin} onChange={(e) => call(() => api.put(`/users/${u.id}/permissions`, { is_super_admin: e.target.checked }))} /> {t("users.superAdmin")}</label>
+            )}
+            {PERMS.map((p) => {
+              const disabled = !me.is_super_admin && (p === "manage_admins" || !me[`perm_${p}`]);
+              return (
+                <label key={p} className="check">
+                  <input type="checkbox" disabled={disabled} checked={!!u[`perm_${p}`]} onChange={(e) => call(() => api.put(`/users/${u.id}/permissions`, { [`perm_${p}`]: e.target.checked }))} /> {t(`perm.${p}`)}
+                </label>
+              );
+            })}
+            <label>{t("users.roleTitle")}
+              <input defaultValue={u.role_title || ""} onBlur={(e) => e.target.value !== (u.role_title || "") && call(() => api.put(`/users/${u.id}/permissions`, { role_title: e.target.value || null }))} />
+            </label>
+          </div>
+        </details>
+      )}
+    </li>
+  );
+}
 
-  const openPermEditor = (u) => {
-    setOpenPerms(openPerms === u.id ? null : u.id);
-    setRoleTitleDraft(u.role_title || "");
-  };
+export default function AdminUsers() {
+  const { user: me } = useAuth();
+  const { t, lang, errorText } = useI18n();
+  const [users, setUsers] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [filter, setFilter] = useState("all");
+  const [q, setQ] = useState("");
+  const [error, setError] = useState("");
+  const [issued, setIssued] = useState(null);
+  const [form, setForm] = useState({ tabel_number: "", full_name: "", post_title: "", department_id: "" });
+  const canCreate = me.is_super_admin || me.perm_manage_users;
 
-  const togglePerm = (u, key) => act(() => api.put(`/users/${u.id}/permissions`, { [key]: !u[key] }));
-  const saveRoleTitle = (u) => act(() => api.put(`/users/${u.id}/permissions`, { role_title: roleTitleDraft }));
-  const toggleSuperAdmin = (u) => {
-    if (!window.confirm(u.is_super_admin ? "Снять статус супер-администратора?" : "Назначить супер-администратором?")) return;
-    act(() => api.put(`/users/${u.id}/permissions`, { is_super_admin: !u.is_super_admin }));
+  const load = async () => {
+    const params = {};
+    if (filter !== "all") params.status = filter;
+    if (q.trim()) params.q = q.trim();
+    try {
+      setUsers((await api.get("/users", { params })).data.users);
+    } catch (err) {
+      setError(errorText(err));
+    }
+  };
+  useEffect(() => { load(); }, [filter, q]); // eslint-disable-line
+  useEffect(() => { api.get("/structure/departments").then((r) => setDepartments(r.data.departments)).catch(() => {}); }, []);
+
+  const create = async (e) => {
+    e.preventDefault();
+    setError("");
+    try {
+      const res = await api.post("/users", {
+        tabel_number: form.tabel_number.trim(),
+        full_name: form.full_name,
+        post_title: form.post_title || undefined,
+        department_id: form.department_id ? Number(form.department_id) : null,
+      });
+      setIssued(res.data);
+      setForm({ tabel_number: "", full_name: "", post_title: "", department_id: "" });
+      load();
+    } catch (err) {
+      setError(errorText(err));
+    }
   };
 
   return (
-    <div className="card">
-      <div className="kaizen-item-head">
-        <h2>Пользователи</h2>
-        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-          <option value="">Все статусы</option>
-          <option value="pending">Ожидают подтверждения</option>
-          <option value="approved">Подтверждённые</option>
-          <option value="rejected">Отклонённые</option>
-          <option value="disabled">Отключённые</option>
-        </select>
-      </div>
-      {error && <div className="alert alert-error">{error}</div>}
-      <table className="table">
-        <thead>
-          <tr>
-            <th>ФИО</th>
-            <th>Логин</th>
-            <th>Отдел / Должность</th>
-            <th>Статус</th>
-            <th>Роль</th>
-            <th>Действия</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((u) => {
-            const flatPositions = flattenTree(buildTreeFromFlat(positions, u.department_id ?? u.department?.id, null));
-            return (
-              <Fragment key={u.id}>
-                <tr>
-                  <td>{u.full_name}</td>
-                  <td>@{u.login}</td>
-                  <td>
-                    <select value={u.department_id || ""} onChange={(e) => changeDepartment(u, e.target.value)}>
-                      <option value="">—</option>
-                      {departments.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}
-                        </option>
-                      ))}
-                    </select>
-                    <select value={u.position_id || ""} onChange={(e) => changePosition(u, e.target.value)}>
-                      <option value="">—</option>
-                      {flatPositions.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {indentLabel(p)}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <span className={`status-pill status-${u.status}`}>{STATUS_LABELS[u.status]}</span>
-                  </td>
-                  <td>
-                    {u.is_super_admin ? (
-                      <span className="badge">Супер админ</span>
-                    ) : u.role_title || PERMISSIONS.some((p) => u[p.key]) ? (
-                      <span className="badge">{u.role_title || "Права назначены"}</span>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td className="row-actions">
-                    {u.status === "pending" && (
-                      <>
-                        <button onClick={() => approve(u.id)}>Подтвердить</button>
-                        <button className="btn-secondary" onClick={() => reject(u.id)}>
-                          Отклонить
-                        </button>
-                      </>
-                    )}
-                    <button className="btn-secondary" onClick={() => openPermEditor(u)}>
-                      {openPerms === u.id ? "Скрыть права" : "Права..."}
-                    </button>
-                    <button className="btn-secondary" onClick={() => toggleDisabled(u)}>
-                      {u.status === "disabled" ? "Включить" : "Отключить"}
-                    </button>
-                    <button className="btn-secondary" onClick={() => resetPassword(u.id)}>
-                      Сбросить пароль
-                    </button>
-                    <button className="btn-danger" onClick={() => removeUser(u.id)}>
-                      Удалить
-                    </button>
-                  </td>
-                </tr>
-                {openPerms === u.id && (
-                  <tr>
-                    <td colSpan={6}>
-                      <div className="card" style={{ margin: 0, background: "#f9fafb" }}>
-                        <div className="inline-form">
-                          <input
-                            placeholder="Название роли (например: Модератор кайдзенов)"
-                            value={roleTitleDraft}
-                            onChange={(e) => setRoleTitleDraft(e.target.value)}
-                          />
-                          <button onClick={() => saveRoleTitle(u)}>Сохранить название</button>
-                        </div>
-                        <div className="perm-grid">
-                          {PERMISSIONS.map((p) => (
-                            <label key={p.key}>
-                              <input type="checkbox" checked={!!u[p.key]} onChange={() => togglePerm(u, p.key)} />
-                              {p.label}
-                            </label>
-                          ))}
-                        </div>
-                        {me?.is_super_admin && (
-                          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <input type="checkbox" style={{ width: "auto" }} checked={!!u.is_super_admin} onChange={() => toggleSuperAdmin(u)} />
-                            Супер-администратор (все права без ограничений)
-                          </label>
-                        )}
-                        <p className="muted small">
-                          Право «Назначение прав» и статус супер-администратора может менять только супер-администратор.
-                        </p>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="stack">
+      {canCreate && (
+        <section className="card">
+          <h2>{t("users.create")}</h2>
+          <form className="row form-row" onSubmit={create}>
+            <input aria-label={t("common.tabel")} placeholder={t("common.tabel")} inputMode="numeric" className="narrow-input" value={form.tabel_number} onChange={(e) => setForm({ ...form, tabel_number: e.target.value })} required />
+            <input aria-label={t("common.fullName")} placeholder={t("common.fullName")} value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} required />
+            <input aria-label={t("users.postDefault")} placeholder={t("users.postDefault")} value={form.post_title} onChange={(e) => setForm({ ...form, post_title: e.target.value })} />
+            <select aria-label={t("common.department")} value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}>
+              <option value="">{t("common.department")}</option>
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+            <button className="btn btn-primary" type="submit">{t("common.add")}</button>
+          </form>
+          {issued && <CodeBox issued={issued} t={t} lang={lang} onClose={() => setIssued(null)} />}
+        </section>
+      )}
+      <section className="card">
+        <h2>{t("users.title")}</h2>
+        <div className="row">
+          <input type="search" placeholder={t("common.search")} value={q} onChange={(e) => setQ(e.target.value)} />
+          <select aria-label={t("common.status")} value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <option value="all">{t("users.filter.all")}</option>
+            <option value="active">{t("users.filter.active")}</option>
+            <option value="disabled">{t("users.filter.disabled")}</option>
+            <option value="needs_activation">{t("users.filter.needs")}</option>
+          </select>
+        </div>
+        {error && <div className="alert alert-error" role="alert">{error}</div>}
+        {users.length === 0 && <p className="muted">{t("users.empty")}</p>}
+        <ul className="list">
+          {users.map((u) => (
+            <UserRow key={u.id} u={u} me={me} departments={departments} t={t} onChanged={load}
+              onError={(e) => setError(e ? errorText(e) : "")} onIssued={setIssued} />
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }

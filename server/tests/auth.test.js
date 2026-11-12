@@ -1,166 +1,185 @@
-const { test, describe, before, after, beforeEach } = require("node:test");
+const { test, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const h = require("./helpers");
 
-describe("auth", () => {
-  let srv;
-  before(async () => {
-    srv = await h.startServer();
-  });
-  after(() => srv.close());
-  beforeEach(() => h.resetDb());
+let api;
+before(async () => { api = await h.startServer(); });
+after(async () => { await api.close(); });
+beforeEach(() => h.resetDb());
 
-  describe("register", () => {
-    test("creates a pending user and never returns the password hash", async () => {
-      const dep = h.createDepartment();
-      const pos = h.createPosition(dep.id);
-      const res = await srv.post("/auth/register", null, {
-        login: "newbie",
-        password: "secret123",
-        full_name: "Новый Сотрудник",
-        department_id: dep.id,
-        position_id: pos.id,
-      });
-      assert.equal(res.status, 201);
-      assert.equal(res.body.user.status, "pending");
-      assert.equal(res.body.user.password_hash, undefined);
-    });
+const login = (tabel, password) => api.post("/auth/login", null, { tabel_number: tabel, password });
 
-    test("rejects short password, short login and missing fields", async () => {
-      const dep = h.createDepartment();
-      const pos = h.createPosition(dep.id);
-      const base = { login: "okname", password: "secret123", full_name: "Имя Фамилия", department_id: dep.id, position_id: pos.id };
-      for (const patch of [{ password: "123" }, { login: "ab" }, { full_name: "" }, { department_id: undefined }]) {
-        const res = await srv.post("/auth/register", null, { ...base, ...patch });
-        assert.equal(res.status, 400, JSON.stringify(patch));
-      }
-    });
+test("вход по табельному номеру и паролю", async () => {
+  const u = h.createUser();
+  const r = await login(u.tabel_number, h.DEFAULT_PASSWORD);
+  assert.equal(r.status, 200);
+  assert.ok(r.body.token);
+  assert.equal(r.body.user.id, u.id);
+  assert.equal(r.body.user.password_hash, undefined);
+  assert.equal(r.body.user.activation_code_hash, undefined);
+  assert.equal(r.body.user.token_version, undefined);
+});
 
-    test("rejects a duplicate login with 409", async () => {
-      const dep = h.createDepartment();
-      const pos = h.createPosition(dep.id);
-      h.createUser({ login: "taken" });
-      const res = await srv.post("/auth/register", null, {
-        login: "taken", password: "secret123", full_name: "Кто-то", department_id: dep.id, position_id: pos.id,
-      });
-      assert.equal(res.status, 409);
-    });
+test("табельный номер можно передать строкой", async () => {
+  const u = h.createUser();
+  assert.equal((await login(String(u.tabel_number), h.DEFAULT_PASSWORD)).status, 200);
+});
 
-    test("rejects a position that belongs to another department", async () => {
-      const depA = h.createDepartment();
-      const depB = h.createDepartment();
-      const posB = h.createPosition(depB.id);
-      const res = await srv.post("/auth/register", null, {
-        login: "mismatch", password: "secret123", full_name: "Кто-то", department_id: depA.id, position_id: posB.id,
-      });
-      assert.equal(res.status, 400);
-    });
+test("неверный пароль и неизвестный табельный неотличимы", async () => {
+  const u = h.createUser();
+  const a = await login(u.tabel_number, "wrong-password");
+  const b = await login(2999, "whatever123");
+  assert.equal(a.status, 401);
+  assert.equal(b.status, 401);
+  assert.equal(a.body.code, "invalid_credentials");
+  assert.deepEqual(a.body, b.body);
+});
 
-    test("a malformed JSON body gives 400, not 500", async () => {
-      const res = await srv.request("POST", "/auth/register", { rawBody: "{not json" });
-      assert.equal(res.status, 400);
-    });
-  });
+test("некорректный ввод при входе", async () => {
+  for (const body of [{}, { tabel_number: 5 }, { password: "x" }, { tabel_number: 0, password: "x" }, { tabel_number: 3001, password: "x" }, { tabel_number: "abc", password: "x" }, { tabel_number: 1.5, password: "x" }]) {
+    const r = await api.post("/auth/login", null, body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.equal(r.body.code, "login_invalid_input");
+  }
+});
 
-  describe("login", () => {
-    test("approved user gets a token and no password hash", async () => {
-      const u = h.createUser({ login: "ivan" });
-      const res = await srv.post("/auth/login", null, { login: "ivan", password: h.DEFAULT_PASSWORD });
-      assert.equal(res.status, 200);
-      assert.ok(res.body.token);
-      assert.equal(res.body.user.id, u.id);
-      assert.equal(res.body.user.password_hash, undefined);
-    });
+test("аккаунт без пароля: needs_activation", async () => {
+  const u = h.createUser({ password_hash: null });
+  const r = await login(u.tabel_number, "anything123");
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, "needs_activation");
+});
 
-    test("wrong password and unknown login give the same 401 message", async () => {
-      h.createUser({ login: "ivan" });
-      const wrong = await srv.post("/auth/login", null, { login: "ivan", password: "nope-nope" });
-      const unknown = await srv.post("/auth/login", null, { login: "ghost", password: "nope-nope" });
-      assert.equal(wrong.status, 401);
-      assert.equal(unknown.status, 401);
-      assert.equal(wrong.body.error, unknown.body.error);
-    });
+test("отключённый пользователь не входит", async () => {
+  const u = h.createUser({ status: "disabled" });
+  const r = await login(u.tabel_number, h.DEFAULT_PASSWORD);
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, "account_disabled");
+});
 
-    test("non-string credentials are rejected with 400", async () => {
-      const res = await srv.post("/auth/login", null, { login: { $ne: "" }, password: ["x"] });
-      assert.equal(res.status, 400);
-    });
+test("GET /me без токена, с мусором и с валидным токеном", async () => {
+  assert.equal((await api.get("/auth/me")).status, 401);
+  assert.equal((await api.get("/auth/me", "garbage")).status, 401);
+  const u = h.createUser();
+  const r = await api.get("/auth/me", h.tokenFor(u));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.user.tabel_number, u.tabel_number);
+});
 
-    for (const status of ["pending", "rejected", "disabled"]) {
-      test(`a ${status} account cannot log in and gets its status back`, async () => {
-        h.createUser({ login: `u_${status}`, status });
-        const res = await srv.post("/auth/login", null, { login: `u_${status}`, password: h.DEFAULT_PASSWORD });
-        assert.equal(res.status, 403);
-        assert.equal(res.body.status, status);
-        assert.equal(res.body.token, undefined);
-      });
+test("токен отключённого или удалённого пользователя перестаёт работать", async () => {
+  const u = h.createUser();
+  const t = h.tokenFor(u);
+  h.db.prepare("UPDATE users SET status='disabled' WHERE id=?").run(u.id);
+  const r = await api.get("/auth/me", t);
+  assert.equal(r.status, 401);
+  assert.equal(r.body.code, "session_unavailable");
+  h.db.prepare("DELETE FROM users WHERE id=?").run(u.id);
+  assert.equal((await api.get("/auth/me", t)).status, 401);
+});
+
+test("смена пароля: старый пароль нужен, старые токены гаснут, новый токен работает", async () => {
+  const u = h.createUser();
+  const old = h.tokenFor(u);
+  assert.equal((await api.put("/auth/me/password", old, { current_password: "nope", new_password: "newpassword1" })).body.code, "current_password_wrong");
+  assert.equal((await api.put("/auth/me/password", old, { current_password: h.DEFAULT_PASSWORD, new_password: "short" })).body.code, "password_policy");
+  const r = await api.put("/auth/me/password", old, { current_password: h.DEFAULT_PASSWORD, new_password: "newpassword1" });
+  assert.equal(r.status, 200);
+  assert.equal((await api.get("/auth/me", old)).status, 401);
+  assert.equal((await api.get("/auth/me", r.body.token)).status, 200);
+  assert.equal((await login(u.tabel_number, h.DEFAULT_PASSWORD)).status, 401);
+  assert.equal((await login(u.tabel_number, "newpassword1")).status, 200);
+});
+
+test("настройки языка и темы", async () => {
+  const u = h.createUser();
+  const t = h.tokenFor(u);
+  assert.equal((await api.put("/auth/me/preferences", t, { language: "uz", theme: "dark" })).body.user.language, "uz");
+  assert.equal((await api.get("/auth/me", t)).body.user.theme, "dark");
+  assert.equal((await api.put("/auth/me/preferences", t, { theme: "light" })).body.user.language, "uz");
+  assert.equal((await api.put("/auth/me/preferences", t, { language: "de" })).body.code, "invalid_language");
+  assert.equal((await api.put("/auth/me/preferences", t, { theme: "neon" })).body.code, "invalid_theme");
+});
+
+// ---------- activation ----------
+async function adminCreates(extra = {}) {
+  const admin = h.createUser({ perm_manage_users: 1 });
+  const tabel = h.nextTabel();
+  const r = await api.post("/users", h.tokenFor(admin), { tabel_number: tabel, full_name: "Новый Мастер", ...extra });
+  assert.equal(r.status, 201);
+  return { tabel, code: r.body.activation_code, admin, user: r.body.user };
+}
+
+test("активация: код + новый пароль → вход", async () => {
+  const { tabel, code } = await adminCreates();
+  const r = await api.post("/auth/activate", null, { tabel_number: tabel, activation_code: code, new_password: "mypassword1" });
+  assert.equal(r.status, 200);
+  assert.ok(r.body.token);
+  assert.equal((await login(tabel, "mypassword1")).status, 200);
+  const again = await api.post("/auth/activate", null, { tabel_number: tabel, activation_code: code, new_password: "other-password1" });
+  assert.equal(again.status, 400);
+  assert.equal(again.body.code, "activation_failed");
+});
+
+test("код принимается в любом регистре и без дефиса", async () => {
+  const { tabel, code } = await adminCreates();
+  const r = await api.post("/auth/activate", null, { tabel_number: tabel, activation_code: code.toLowerCase().replace("-", " "), new_password: "mypassword1" });
+  assert.equal(r.status, 200);
+});
+
+test("неверный код: после 5 попыток код аннулируется, даже верный не подходит", async () => {
+  const { tabel, code } = await adminCreates();
+  for (let i = 0; i < 5; i++) {
+    const r = await api.post("/auth/activate", null, { tabel_number: tabel, activation_code: "AAAA-AAAA", new_password: "mypassword1" });
+    assert.equal(r.body.code, "activation_failed");
+  }
+  const r = await api.post("/auth/activate", null, { tabel_number: tabel, activation_code: code, new_password: "mypassword1" });
+  assert.equal(r.status, 400);
+});
+
+test("просроченный код не работает", async () => {
+  const { tabel, code } = await adminCreates();
+  h.db.prepare("UPDATE users SET activation_expires_at = '2000-01-01 00:00:00' WHERE tabel_number = ?").run(tabel);
+  const r = await api.post("/auth/activate", null, { tabel_number: tabel, activation_code: code, new_password: "mypassword1" });
+  assert.equal(r.body.code, "activation_failed");
+});
+
+test("активация: ответ одинаков для неизвестного табельного и неверного кода; слабый пароль отклоняется", async () => {
+  const { tabel, code } = await adminCreates();
+  const a = await api.post("/auth/activate", null, { tabel_number: 2998, activation_code: "AAAA-AAAA", new_password: "mypassword1" });
+  const b = await api.post("/auth/activate", null, { tabel_number: tabel, activation_code: "AAAA-AAAA", new_password: "mypassword1" });
+  assert.deepEqual(a.body, b.body);
+  const weak = await api.post("/auth/activate", null, { tabel_number: tabel, activation_code: code, new_password: "short" });
+  assert.equal(weak.body.code, "password_policy");
+  assert.equal((await api.post("/auth/activate", null, { tabel_number: tabel })).status, 400);
+});
+
+test("отключённый пользователь не может активироваться", async () => {
+  const { tabel, code, user } = await adminCreates();
+  h.db.prepare("UPDATE users SET status='disabled' WHERE id=?").run(user.id);
+  const r = await api.post("/auth/activate", null, { tabel_number: tabel, activation_code: code, new_password: "mypassword1" });
+  assert.equal(r.status, 403);
+});
+
+test("ограничение частоты: 10 неудачных входов → 429, успешные не считаются", async () => {
+  const limited = await h.startServer({ rateLimits: true });
+  try {
+    const u = h.createUser();
+    for (let i = 0; i < 12; i++) {
+      const r = await limited.post("/auth/login", null, { tabel_number: u.tabel_number, password: h.DEFAULT_PASSWORD });
+      assert.equal(r.status, 200);
     }
-  });
+    let last;
+    for (let i = 0; i < 11; i++) last = await limited.post("/auth/login", null, { tabel_number: u.tabel_number, password: "bad-password" });
+    assert.equal(last.status, 429);
+    assert.equal(last.body.code, "rate_limited");
+  } finally {
+    await limited.close();
+  }
+});
 
-  describe("sessions", () => {
-    test("/auth/me requires a token", async () => {
-      assert.equal((await srv.get("/auth/me")).status, 401);
-      assert.equal((await srv.get("/auth/me", "garbage.token.value")).status, 401);
-    });
-
-    test("/auth/me returns the current user", async () => {
-      const u = h.createUser();
-      const res = await srv.get("/auth/me", h.tokenFor(u));
-      assert.equal(res.status, 200);
-      assert.equal(res.body.user.id, u.id);
-      assert.equal(res.body.user.password_hash, undefined);
-    });
-
-    test("a token stops working immediately when the account is disabled", async () => {
-      const u = h.createUser();
-      const token = h.tokenFor(u);
-      assert.equal((await srv.get("/auth/me", token)).status, 200);
-      h.db.prepare("UPDATE users SET status = 'disabled' WHERE id = ?").run(u.id);
-      assert.equal((await srv.get("/auth/me", token)).status, 401);
-      assert.equal((await srv.post("/kaizens", token, { title: "t", description: "d" })).status, 401);
-    });
-
-    test("a token stops working when the user is deleted (no 500)", async () => {
-      const u = h.createUser();
-      const token = h.tokenFor(u);
-      h.db.prepare("DELETE FROM users WHERE id = ?").run(u.id);
-      for (const res of [await srv.get("/auth/me", token), await srv.get("/kaizens", token), await srv.get("/kaizens/1", token)]) {
-        assert.equal(res.status, 401);
-      }
-    });
-  });
-
-  describe("rate limiting", () => {
-    test("repeated failed logins are throttled with 429; successful ones are not counted", async () => {
-      const limited = await h.startServer({ rateLimits: true });
-      try {
-        h.createUser({ login: "ivan" });
-        // 5 successes must not eat into the failure budget
-        for (let i = 0; i < 5; i++) {
-          assert.equal((await limited.post("/auth/login", null, { login: "ivan", password: h.DEFAULT_PASSWORD })).status, 200);
-        }
-        let last;
-        for (let i = 0; i < 10; i++) last = await limited.post("/auth/login", null, { login: "ivan", password: "wrong-pass" });
-        assert.equal(last.status, 401);
-        const blocked = await limited.post("/auth/login", null, { login: "ivan", password: "wrong-pass" });
-        assert.equal(blocked.status, 429);
-        assert.ok(blocked.body.error);
-      } finally {
-        await limited.close();
-      }
-    });
-  });
-
-  test("unknown API routes return a JSON 404", async () => {
-    const res = await srv.get("/definitely-not-a-route");
-    assert.equal(res.status, 404);
-    assert.ok(res.body.error);
-  });
-
-  test("security headers are set", async () => {
-    const res = await srv.get("/health");
-    assert.equal(res.status, 200);
-    assert.equal(res.headers.get("x-content-type-options"), "nosniff");
-    assert.equal(res.headers.get("x-powered-by"), null);
-  });
+test("служебные ответы: 404 и битый JSON содержат code", async () => {
+  assert.equal((await api.get("/nothing")).body.code, "not_found");
+  const r = await api.request("POST", "/auth/login", { rawBody: "{bad" });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "bad_json");
 });

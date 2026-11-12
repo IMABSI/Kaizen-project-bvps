@@ -10,17 +10,18 @@ const db = require("../src/db");
 const { createApp } = require("../src/app");
 const { signToken } = require("../src/auth");
 
-const DEFAULT_PASSWORD = "secret123";
+const DEFAULT_PASSWORD = "secret1234";
 const PASSWORD_HASH = bcrypt.hashSync(DEFAULT_PASSWORD, 4); // low cost: tests create many users
 
 function resetDb() {
   db.exec(`
     DELETE FROM kaizen_status_history;
     DELETE FROM kaizens;
+    DELETE FROM team_members;
     DELETE FROM users;
-    DELETE FROM positions;
     DELETE FROM departments;
   `);
+  tabelCounter = 100;
 }
 
 async function startServer(options = {}) {
@@ -59,55 +60,65 @@ async function startServer(options = {}) {
 }
 
 let counter = 0;
+let tabelCounter = 100;
+
+/** A fresh tabel number that is free in this test's database. */
+function nextTabel() {
+  return ++tabelCounter;
+}
 
 function createDepartment(name = `Dept ${++counter}`) {
   const info = db.prepare("INSERT INTO departments (name) VALUES (?)").run(name);
   return db.prepare("SELECT * FROM departments WHERE id = ?").get(info.lastInsertRowid);
 }
 
-function createPosition(departmentId, name = `Pos ${++counter}`, parentId = null) {
-  const info = db.prepare("INSERT INTO positions (department_id, parent_id, name) VALUES (?, ?, ?)").run(departmentId, parentId, name);
-  return db.prepare("SELECT * FROM positions WHERE id = ?").get(info.lastInsertRowid);
-}
-
-/** Inserts a user straight into the DB. Default: approved, no permissions. */
+/** Inserts a user straight into the DB. Default: active master with a password and no permissions. */
 function createUser(overrides = {}) {
   const n = ++counter;
   const u = {
-    login: `user${n}`,
+    tabel_number: nextTabel(),
     full_name: `User ${n}`,
-    status: "approved",
+    post_title: "Мастер",
+    status: "active",
+    password_hash: PASSWORD_HASH,
     is_super_admin: 0,
     perm_manage_structure: 0,
     perm_manage_users: 0,
     perm_manage_admins: 0,
-    perm_approve_any: 0,
     perm_manage_kaizens: 0,
+    perm_view_kaizens: 0,
     department_id: null,
-    position_id: null,
     ...overrides,
   };
   const info = db
     .prepare(
-      `INSERT INTO users (login, password_hash, full_name, department_id, position_id, is_super_admin,
-         perm_manage_structure, perm_manage_users, perm_manage_admins, perm_approve_any, perm_manage_kaizens, status)
+      `INSERT INTO users (tabel_number, full_name, post_title, department_id, password_hash, is_super_admin,
+         perm_manage_structure, perm_manage_users, perm_manage_admins, perm_manage_kaizens, perm_view_kaizens, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      u.login,
-      PASSWORD_HASH,
+      u.tabel_number,
       u.full_name,
+      u.post_title,
       u.department_id,
-      u.position_id,
+      u.password_hash,
       u.is_super_admin,
       u.perm_manage_structure,
       u.perm_manage_users,
       u.perm_manage_admins,
-      u.perm_approve_any,
       u.perm_manage_kaizens,
+      u.perm_view_kaizens,
       u.status
     );
   return getUser(info.lastInsertRowid);
+}
+
+function createMember(owner, overrides = {}) {
+  const m = { tabel_number: nextTabel(), full_name: `Member ${++counter}`, post_title: "Оператор", parent_id: null, ...overrides };
+  const info = db
+    .prepare("INSERT INTO team_members (owner_user_id, parent_id, tabel_number, full_name, post_title) VALUES (?, ?, ?, ?, ?)")
+    .run(owner.id, m.parent_id, m.tabel_number, m.full_name, m.post_title);
+  return db.prepare("SELECT * FROM team_members WHERE id = ?").get(info.lastInsertRowid);
 }
 
 function getUser(id) {
@@ -115,7 +126,7 @@ function getUser(id) {
 }
 
 function tokenFor(user) {
-  return signToken(user);
+  return signToken(getUser(user.id) || user);
 }
 
 function createKaizen({ author, title = "Идея", description = "Описание", status = "new", department_id } = {}) {
@@ -136,9 +147,10 @@ module.exports = {
   DEFAULT_PASSWORD,
   resetDb,
   startServer,
+  nextTabel,
   createDepartment,
-  createPosition,
   createUser,
+  createMember,
   createKaizen,
   getUser,
   tokenFor,

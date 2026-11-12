@@ -31,7 +31,7 @@ function canViewKaizen(user, kaizen) {
 }
 
 function hydrateKaizen(k) {
-  const author = db.prepare("SELECT id, full_name, login FROM users WHERE id = ?").get(k.author_id);
+  const author = db.prepare("SELECT id, full_name, tabel_number FROM users WHERE id = ?").get(k.author_id);
   const department = k.department_id ? db.prepare("SELECT * FROM departments WHERE id = ?").get(k.department_id) : null;
   const history = db
     .prepare("SELECT * FROM kaizen_status_history WHERE kaizen_id = ? ORDER BY changed_at ASC, id ASC")
