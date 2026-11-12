@@ -1,35 +1,27 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { apiErrorMessage } from "../api";
+import { useI18n } from "../i18n";
+import Switchers from "../components/Switchers";
 
 export default function Login() {
   const { login } = useAuth();
+  const { t, errorText } = useI18n();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ login: "", password: "" });
+  const [tabel, setTabel] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [statusInfo, setStatusInfo] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const onSubmit = async (e) => {
     e.preventDefault();
     setError("");
-    setStatusInfo(null);
     setBusy(true);
     try {
-      await login(form.login.trim(), form.password);
+      await login(tabel.trim(), password);
       navigate("/");
     } catch (err) {
-      const data = err?.response?.data;
-      if (data?.status === "pending") {
-        setStatusInfo("Ваша заявка ещё ожидает подтверждения вышестоящим сотрудником.");
-      } else if (data?.status === "rejected") {
-        setStatusInfo(`Заявка отклонена. Причина: ${data.reason || "не указана"}`);
-      } else if (data?.status === "disabled") {
-        setStatusInfo("Учётная запись отключена администратором.");
-      } else {
-        setError(apiErrorMessage(err, "Не удалось войти"));
-      }
+      setError(errorText(err));
     } finally {
       setBusy(false);
     }
@@ -37,35 +29,25 @@ export default function Login() {
 
   return (
     <div className="auth-page">
-      <form className="card auth-card" onSubmit={onSubmit}>
-        <h1>Kaizen Platform</h1>
-        <p className="muted">Вход в систему подачи и контроля кайдзен-предложений</p>
-
-        <label>
-          Логин
-          <input value={form.login} onChange={(e) => setForm({ ...form, login: e.target.value })} required autoFocus />
-        </label>
-        <label>
-          Пароль
-          <input
-            type="password"
-            value={form.password}
-            onChange={(e) => setForm({ ...form, password: e.target.value })}
-            required
-          />
-        </label>
-
-        {error && <div className="alert alert-error">{error}</div>}
-        {statusInfo && <div className="alert alert-info">{statusInfo}</div>}
-
-        <button type="submit" disabled={busy}>
-          {busy ? "Входим..." : "Войти"}
-        </button>
-
-        <p className="muted small">
-          Нет учётной записи? <Link to="/register">Зарегистрироваться</Link>
-        </p>
-      </form>
+      <div className="auth-top"><Switchers /></div>
+      <div className="card auth-card">
+        <div className="brand big"><span className="brand-mark" aria-hidden="true" />Kaizen</div>
+        <h1>{t("login.title")}</h1>
+        <p className="muted">{t("login.subtitle")}</p>
+        <form onSubmit={onSubmit}>
+          <label>
+            {t("login.tabel")}
+            <input inputMode="numeric" autoComplete="username" value={tabel} onChange={(e) => setTabel(e.target.value)} required autoFocus />
+          </label>
+          <label>
+            {t("login.password")}
+            <input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          </label>
+          {error && <div className="alert alert-error" role="alert">{error}</div>}
+          <button className="btn btn-primary wide" type="submit" disabled={busy}>{t("login.submit")}</button>
+        </form>
+        <p className="small"><Link to="/activate">{t("login.firstTime")}</Link></p>
+      </div>
     </div>
   );
 }
