@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import api, { apiErrorMessage } from "../api";
-import { STATUS_LABELS } from "../statusLabels";
+import api from "../api";
+import { useI18n } from "../i18n";
 import { formatDateTime } from "../formatDate";
 
 export default function Dashboard() {
+  const { t, lang, errorText } = useI18n();
   const [kaizens, setKaizens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ title: "", description: "", category: "" });
@@ -13,14 +14,9 @@ export default function Dashboard() {
 
   const load = () => {
     setLoading(true);
-    api
-      .get("/kaizens")
-      .then((res) => setKaizens(res.data.kaizens))
-      .catch((err) => setError(apiErrorMessage(err)))
-      .finally(() => setLoading(false));
+    api.get("/kaizens").then((res) => setKaizens(res.data.kaizens)).catch((err) => setError(errorText(err))).finally(() => setLoading(false));
   };
-
-  useEffect(load, []);
+  useEffect(load, []); // eslint-disable-line
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -30,10 +26,10 @@ export default function Dashboard() {
     try {
       await api.post("/kaizens", form);
       setForm({ title: "", description: "", category: "" });
-      setSuccess("Предложение отправлено!");
+      setSuccess(t("dash.sent"));
       load();
     } catch (err) {
-      setError(apiErrorMessage(err));
+      setError(errorText(err));
     } finally {
       setBusy(false);
     }
@@ -42,54 +38,31 @@ export default function Dashboard() {
   return (
     <div className="grid-2">
       <section className="card">
-        <h2>Новое кайдзен-предложение</h2>
+        <h2>{t("dash.new")}</h2>
         <form onSubmit={onSubmit}>
-          <label>
-            Название
-            <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
-          </label>
-          <label>
-            Категория (необязательно)
-            <input
-              value={form.category}
-              onChange={(e) => setForm({ ...form, category: e.target.value })}
-              placeholder="например: безопасность, качество, эргономика"
-            />
-          </label>
-          <label>
-            Описание предложения
-            <textarea
-              rows={6}
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              required
-            />
-          </label>
-          {error && <div className="alert alert-error">{error}</div>}
-          {success && <div className="alert alert-success">{success}</div>}
-          <button type="submit" disabled={busy}>
-            {busy ? "Отправляем..." : "Отправить"}
-          </button>
+          <label>{t("dash.title")}<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></label>
+          <label>{t("dash.category")}<input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} /></label>
+          <label>{t("dash.description")}<textarea rows={6} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} required /></label>
+          {error && <div className="alert alert-error" role="alert">{error}</div>}
+          {success && <div className="alert alert-success" role="status">{success}</div>}
+          <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? t("dash.sending") : t("dash.send")}</button>
         </form>
       </section>
-
       <section className="card">
-        <h2>Мои предложения</h2>
-        {loading && <p className="muted">Загрузка...</p>}
-        {!loading && kaizens.length === 0 && <p className="muted">Пока нет предложений.</p>}
-        <ul className="kaizen-list">
+        <h2>{t("dash.mine")}</h2>
+        {loading && <p className="muted">{t("common.loading")}</p>}
+        {!loading && kaizens.length === 0 && <p className="muted">{t("dash.empty")}</p>}
+        <ul className="list">
           {kaizens.map((k) => (
-            <li key={k.id} className="kaizen-item">
-              <div className="kaizen-item-head">
+            <li key={k.id} className="item">
+              <div className="item-head">
                 <strong>{k.title}</strong>
-                <span className={`status-pill status-${k.status}`}>{STATUS_LABELS[k.status]}</span>
+                <span className={`pill pill-${k.status}`}>{t(`status.${k.status}`)}</span>
               </div>
-              {k.category && <div className="muted small">Категория: {k.category}</div>}
+              {k.category && <div className="muted small">{k.category}</div>}
               <p>{k.description}</p>
-              {k.admin_comment && (
-                <div className="alert alert-info small">Комментарий администратора: {k.admin_comment}</div>
-              )}
-              <div className="muted small">Создано: {formatDateTime(k.created_at)}</div>
+              {k.admin_comment && <div className="alert alert-info small">{t("dash.adminComment")}: {k.admin_comment}</div>}
+              <div className="muted small">{formatDateTime(k.created_at, lang)}</div>
             </li>
           ))}
         </ul>

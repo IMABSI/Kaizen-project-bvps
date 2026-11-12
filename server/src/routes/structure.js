@@ -1,159 +1,60 @@
 const express = require("express");
+const { z } = require("zod");
 const db = require("../db");
 const { authMiddleware, requirePermission } = require("../auth");
+const { fail } = require("../errors");
 
 const router = express.Router();
 
-function buildTree(positions, parentId = null) {
-  return positions
-    .filter((p) => p.parent_id === parentId)
-    .map((p) => ({ ...p, children: buildTree(positions, p.id) }));
-}
-
-function siblingNameTaken(departmentId, parentId, name, exceptId = null) {
-  const row = db
-    .prepare("SELECT id FROM positions WHERE department_id = ? AND parent_id IS ? AND name = ? AND id IS NOT ?")
-    .get(departmentId, parentId, name, exceptId);
-  return !!row;
-}
-
-function isDescendant(positions, candidateId, ofId) {
-  // true if `candidateId` is `ofId` itself or a descendant of it
-  if (candidateId === ofId) return true;
-  const node = positions.find((p) => p.id === candidateId);
-  if (!node || node.parent_id === null || node.parent_id === undefined) return false;
-  return isDescendant(positions, node.parent_id, ofId);
-}
-
-// Public (used by the registration form) - departments with their full position tree
-router.get("/public", (req, res) => {
-  const departments = db.prepare("SELECT * FROM departments ORDER BY name").all();
-  const positions = db.prepare("SELECT * FROM positions ORDER BY department_id, name").all();
-  const byDept = departments.map((d) => ({
-    ...d,
-    positions: buildTree(
-      positions.filter((p) => p.department_id === d.id),
-      null
-    ),
-  }));
-  res.json({ departments: byDept });
+const departmentSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  description: z.string().trim().max(500).nullable().optional(),
 });
 
-// --- Admin: departments CRUD ---
-router.get("/departments", authMiddleware, requirePermission("perm_manage_structure"), (req, res) => {
+router.use(authMiddleware);
+
+// Every signed-in user needs the department list (forms, filters).
+router.get("/departments", (req, res) => {
   const departments = db.prepare("SELECT * FROM departments ORDER BY name").all();
   res.json({ departments });
 });
 
-router.post("/departments", authMiddleware, requirePermission("perm_manage_structure"), (req, res) => {
-  const { name, description } = req.body || {};
-  if (!name || !name.trim()) return res.status(400).json({ error: "Укажите название отдела" });
-  try {
-    const info = db.prepare("INSERT INTO departments (name, description) VALUES (?, ?)").run(name.trim(), description || null);
-    const dep = db.prepare("SELECT * FROM departments WHERE id = ?").get(info.lastInsertRowid);
-    res.status(201).json({ department: dep });
-  } catch (e) {
-    res.status(409).json({ error: "Отдел с таким названием уже существует" });
-  }
-});
-
-router.put("/departments/:id", authMiddleware, requirePermission("perm_manage_structure"), (req, res) => {
-  const { name, description } = req.body || {};
-  const dep = db.prepare("SELECT * FROM departments WHERE id = ?").get(req.params.id);
-  if (!dep) return res.status(404).json({ error: "Отдел не найден" });
-  try {
-    db.prepare("UPDATE departments SET name = COALESCE(?, name), description = COALESCE(?, description) WHERE id = ?").run(
-      typeof name === "string" && name.trim() ? name.trim() : null,
-      description ?? null,
-      req.params.id
-    );
-  } catch (e) {
-    return res.status(409).json({ error: "Отдел с таким названием уже существует" });
-  }
-  res.json({ department: db.prepare("SELECT * FROM departments WHERE id = ?").get(req.params.id) });
-});
-
-router.delete("/departments/:id", authMiddleware, requirePermission("perm_manage_structure"), (req, res) => {
-  db.prepare("DELETE FROM departments WHERE id = ?").run(req.params.id);
-  res.json({ ok: true });
-});
-
-// --- Admin: positions (tree nodes) CRUD ---
-router.get("/positions", authMiddleware, requirePermission("perm_manage_structure"), (req, res) => {
-  const positions = db.prepare("SELECT * FROM positions ORDER BY department_id, name").all();
-  res.json({ positions });
-});
-
-router.post("/positions", authMiddleware, requirePermission("perm_manage_structure"), (req, res) => {
-  const { department_id, name, parent_id } = req.body || {};
-  if (!department_id || !name || !name.trim()) {
-    return res.status(400).json({ error: "Укажите отдел и название должности/подпункта" });
-  }
-
-  let parentIdValue = null;
-  if (parent_id !== undefined && parent_id !== null && parent_id !== "") {
-    const parent = db.prepare("SELECT * FROM positions WHERE id = ?").get(parent_id);
-    if (!parent || parent.department_id !== Number(department_id)) {
-      return res.status(400).json({ error: "Родительский пункт должен быть в том же отделе" });
-    }
-    parentIdValue = parent.id;
-  }
-
-  const dep = db.prepare("SELECT id FROM departments WHERE id = ?").get(department_id);
-  if (!dep) return res.status(400).json({ error: "Отдел не найден" });
-
-  // SQLite treats NULLs as distinct inside UNIQUE(...), so top-level duplicates (parent_id NULL)
-  // are not caught by the table constraint and must be checked explicitly.
-  if (siblingNameTaken(dep.id, parentIdValue, name.trim())) {
-    return res.status(409).json({ error: "Такое название уже используется на этом уровне" });
-  }
-
+router.post("/departments", requirePermission("perm_manage_structure"), (req, res) => {
+  const parsed = departmentSchema.safeParse(req.body || {});
+  if (!parsed.success) return fail(res, 400, "department_invalid_input", "Укажите название отдела (до 100 символов)");
   try {
     const info = db
-      .prepare("INSERT INTO positions (department_id, parent_id, name) VALUES (?, ?, ?)")
-      .run(dep.id, parentIdValue, name.trim());
-    const pos = db.prepare("SELECT * FROM positions WHERE id = ?").get(info.lastInsertRowid);
-    res.status(201).json({ position: pos });
+      .prepare("INSERT INTO departments (name, description) VALUES (?, ?)")
+      .run(parsed.data.name, parsed.data.description || null);
+    res.status(201).json({ department: db.prepare("SELECT * FROM departments WHERE id = ?").get(info.lastInsertRowid) });
   } catch (e) {
-    res.status(409).json({ error: "Такое название уже используется на этом уровне" });
+    return fail(res, 409, "department_exists", "Отдел с таким названием уже существует");
   }
 });
 
-router.put("/positions/:id", authMiddleware, requirePermission("perm_manage_structure"), (req, res) => {
-  const { name, parent_id } = req.body || {};
-  const pos = db.prepare("SELECT * FROM positions WHERE id = ?").get(req.params.id);
-  if (!pos) return res.status(404).json({ error: "Пункт не найден" });
-
-  let newParentId = pos.parent_id;
-  if (parent_id !== undefined) {
-    if (parent_id === null || parent_id === "") {
-      newParentId = null;
-    } else {
-      const allInDept = db.prepare("SELECT * FROM positions WHERE department_id = ?").all(pos.department_id);
-      const candidate = allInDept.find((p) => p.id === Number(parent_id));
-      if (!candidate) return res.status(400).json({ error: "Родительский пункт должен быть в том же отделе" });
-      if (isDescendant(allInDept, candidate.id, pos.id)) {
-        return res.status(400).json({ error: "Нельзя переместить пункт внутрь самого себя или своего потомка" });
-      }
-      newParentId = candidate.id;
-    }
-  }
-
-  const newName = typeof name === "string" && name.trim() ? name.trim() : pos.name;
-  if (siblingNameTaken(pos.department_id, newParentId, newName, pos.id)) {
-    return res.status(409).json({ error: "Такое название уже используется на этом уровне" });
-  }
-
+router.put("/departments/:id", requirePermission("perm_manage_structure"), (req, res) => {
+  const dep = db.prepare("SELECT * FROM departments WHERE id = ?").get(req.params.id);
+  if (!dep) return fail(res, 404, "department_not_found", "Отдел не найден");
+  const parsed = departmentSchema.partial().safeParse(req.body || {});
+  if (!parsed.success) return fail(res, 400, "department_invalid_input", "Некорректные данные отдела");
+  const { name, description } = parsed.data;
   try {
-    db.prepare("UPDATE positions SET name = ?, parent_id = ? WHERE id = ?").run(newName, newParentId, req.params.id);
-    res.json({ position: db.prepare("SELECT * FROM positions WHERE id = ?").get(req.params.id) });
+    db.prepare("UPDATE departments SET name = ?, description = ? WHERE id = ?").run(
+      name ?? dep.name,
+      description === undefined ? dep.description : description || null,
+      dep.id
+    );
   } catch (e) {
-    res.status(409).json({ error: "Такое название уже используется на этом уровне" });
+    return fail(res, 409, "department_exists", "Отдел с таким названием уже существует");
   }
+  res.json({ department: db.prepare("SELECT * FROM departments WHERE id = ?").get(dep.id) });
 });
 
-router.delete("/positions/:id", authMiddleware, requirePermission("perm_manage_structure"), (req, res) => {
-  db.prepare("DELETE FROM positions WHERE id = ?").run(req.params.id);
+// Deleting a department leaves its people in place, just without a department.
+router.delete("/departments/:id", requirePermission("perm_manage_structure"), (req, res) => {
+  const dep = db.prepare("SELECT * FROM departments WHERE id = ?").get(req.params.id);
+  if (!dep) return fail(res, 404, "department_not_found", "Отдел не найден");
+  db.prepare("DELETE FROM departments WHERE id = ?").run(dep.id);
   res.json({ ok: true });
 });
 

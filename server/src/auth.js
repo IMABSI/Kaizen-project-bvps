@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const db = require("./db");
+const { fail } = require("./errors");
 
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const DEV_FALLBACK_SECRET = "dev-secret-change-me-in-production";
@@ -18,29 +19,29 @@ if (!JWT_SECRET || JWT_SECRET === "replace-with-a-long-random-string") {
 const JWT_EXPIRES_IN = "12h";
 
 function signToken(user) {
-  return jwt.sign({ sub: user.id, login: user.login }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign({ sub: user.id, tv: user.token_version }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
 /**
- * Verifies the token AND re-reads the user on every request, so a disabled, rejected or
- * deleted account loses access immediately instead of when the token expires.
- * Attaches the fresh user row to req.currentUser (and the id to req.userId).
+ * Verifies the token AND re-reads the user on every request, so a disabled or deleted account — or one
+ * whose password was changed/reset (token_version bumped) — loses access immediately instead of when the
+ * token expires. Attaches the fresh user row to req.currentUser (and the id to req.userId).
  */
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ error: "Требуется авторизация" });
+  if (!token) return fail(res, 401, "auth_required", "Требуется авторизация");
 
   let payload;
   try {
     payload = jwt.verify(token, JWT_SECRET);
   } catch (e) {
-    return res.status(401).json({ error: "Недействительный или истёкший токен" });
+    return fail(res, 401, "token_invalid", "Недействительный или истёкший токен");
   }
 
   const user = db.prepare("SELECT * FROM users WHERE id = ?").get(payload.sub);
-  if (!user || user.status !== "approved") {
-    return res.status(401).json({ error: "Учётная запись недоступна. Войдите заново." });
+  if (!user || user.status !== "active" || !user.password_hash || user.token_version !== payload.tv) {
+    return fail(res, 401, "session_unavailable", "Сессия недействительна. Войдите заново.");
   }
 
   req.userId = user.id;
@@ -49,15 +50,15 @@ function authMiddleware(req, res, next) {
 }
 
 /**
- * Grants access to super admins unconditionally, or to users who hold the given granular
- * permission (e.g. "perm_manage_structure"). Must run after authMiddleware.
+ * Grants access to super admins unconditionally, or to users who hold the given granular permission
+ * (e.g. "perm_manage_structure"). Must run after authMiddleware.
  */
-function requirePermission(permKey) {
+function requirePermission(...permKeys) {
   return function (req, res, next) {
     const user = req.currentUser;
-    if (!user) return res.status(401).json({ error: "Требуется авторизация" });
-    if (!user.is_super_admin && !user[permKey]) {
-      return res.status(403).json({ error: "У вас нет прав для этого действия" });
+    if (!user) return fail(res, 401, "auth_required", "Требуется авторизация");
+    if (!user.is_super_admin && !permKeys.some((k) => user[k])) {
+      return fail(res, 403, "forbidden", "У вас нет прав для этого действия");
     }
     next();
   };
@@ -65,10 +66,8 @@ function requirePermission(permKey) {
 
 function requireSuperAdmin(req, res, next) {
   const user = req.currentUser;
-  if (!user) return res.status(401).json({ error: "Требуется авторизация" });
-  if (!user.is_super_admin) {
-    return res.status(403).json({ error: "Требуются права супер-администратора" });
-  }
+  if (!user) return fail(res, 401, "auth_required", "Требуется авторизация");
+  if (!user.is_super_admin) return fail(res, 403, "super_admin_required", "Требуются права супер-администратора");
   next();
 }
 
