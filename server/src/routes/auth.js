@@ -6,10 +6,12 @@ const { signToken, authMiddleware } = require("../auth");
 
 const router = express.Router();
 
+const DUMMY_HASH = bcrypt.hashSync("dummy-password-for-timing", 10);
+
 const registerSchema = z.object({
-  login: z.string().min(3).max(64),
+  login: z.string().trim().min(3).max(64),
   password: z.string().min(6).max(128),
-  full_name: z.string().min(2).max(128),
+  full_name: z.string().trim().min(2).max(128),
   department_id: z.number().int(),
   position_id: z.number().int(),
 });
@@ -56,11 +58,14 @@ router.post("/login", (req, res) => {
   const { login, password } = req.body || {};
   if (!login || !password) return res.status(400).json({ error: "Введите логин и пароль" });
 
-  const user = db.prepare("SELECT * FROM users WHERE login = ?").get(login);
-  if (!user) return res.status(401).json({ error: "Неверный логин или пароль" });
+  if (typeof login !== "string" || typeof password !== "string") {
+    return res.status(400).json({ error: "Введите логин и пароль" });
+  }
 
-  const ok = bcrypt.compareSync(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: "Неверный логин или пароль" });
+  const user = db.prepare("SELECT * FROM users WHERE login = ?").get(login);
+  // Compare against a dummy hash for unknown logins so response time doesn't reveal which logins exist.
+  const ok = bcrypt.compareSync(password, user ? user.password_hash : DUMMY_HASH);
+  if (!user || !ok) return res.status(401).json({ error: "Неверный логин или пароль" });
 
   if (user.status === "pending") {
     return res.status(403).json({ error: "Ваша учётная запись ещё не подтверждена", status: "pending" });
@@ -77,9 +82,7 @@ router.post("/login", (req, res) => {
 });
 
 router.get("/me", authMiddleware, (req, res) => {
-  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.userId);
-  if (!user) return res.status(404).json({ error: "Пользователь не найден" });
-  return res.json({ user: publicUser(user) });
+  return res.json({ user: publicUser(req.currentUser) });
 });
 
 module.exports = router;

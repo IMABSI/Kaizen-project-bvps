@@ -27,7 +27,7 @@ function run() {
 
   const insertDept = db.prepare("INSERT OR IGNORE INTO departments (name) VALUES (?)");
   const getDept = db.prepare("SELECT * FROM departments WHERE name = ?");
-  const insertPos = db.prepare("INSERT OR IGNORE INTO positions (department_id, parent_id, name) VALUES (?, ?, ?)");
+  const insertPos = db.prepare("INSERT INTO positions (department_id, parent_id, name) VALUES (?, ?, ?)");
   const getPos = db.prepare("SELECT * FROM positions WHERE department_id = ? AND name = ? AND parent_id IS ?");
 
   for (const dep of DEPARTMENTS) {
@@ -35,8 +35,13 @@ function run() {
     const department = getDept.get(dep.name);
     let parentId = null;
     for (const posName of dep.positions) {
-      insertPos.run(department.id, parentId, posName);
-      const pos = getPos.get(department.id, posName, parentId);
+      // INSERT OR IGNORE can't dedupe top-level rows (NULL parent_id is "distinct" in UNIQUE),
+      // so look the position up first: running the seed twice must not create copies.
+      let pos = getPos.get(department.id, posName, parentId);
+      if (!pos) {
+        insertPos.run(department.id, parentId, posName);
+        pos = getPos.get(department.id, posName, parentId);
+      }
       parentId = pos.id;
     }
     console.log(`Отдел готов: ${dep.name} (${dep.positions.join(" -> ")})`);

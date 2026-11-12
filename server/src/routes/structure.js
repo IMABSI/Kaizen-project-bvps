@@ -10,6 +10,13 @@ function buildTree(positions, parentId = null) {
     .map((p) => ({ ...p, children: buildTree(positions, p.id) }));
 }
 
+function siblingNameTaken(departmentId, parentId, name, exceptId = null) {
+  const row = db
+    .prepare("SELECT id FROM positions WHERE department_id = ? AND parent_id IS ? AND name = ? AND id IS NOT ?")
+    .get(departmentId, parentId, name, exceptId);
+  return !!row;
+}
+
 function isDescendant(positions, candidateId, ofId) {
   // true if `candidateId` is `ofId` itself or a descendant of it
   if (candidateId === ofId) return true;
@@ -54,11 +61,15 @@ router.put("/departments/:id", authMiddleware, requirePermission("perm_manage_st
   const { name, description } = req.body || {};
   const dep = db.prepare("SELECT * FROM departments WHERE id = ?").get(req.params.id);
   if (!dep) return res.status(404).json({ error: "Отдел не найден" });
-  db.prepare("UPDATE departments SET name = COALESCE(?, name), description = COALESCE(?, description) WHERE id = ?").run(
-    name || null,
-    description ?? null,
-    req.params.id
-  );
+  try {
+    db.prepare("UPDATE departments SET name = COALESCE(?, name), description = COALESCE(?, description) WHERE id = ?").run(
+      typeof name === "string" && name.trim() ? name.trim() : null,
+      description ?? null,
+      req.params.id
+    );
+  } catch (e) {
+    return res.status(409).json({ error: "Отдел с таким названием уже существует" });
+  }
   res.json({ department: db.prepare("SELECT * FROM departments WHERE id = ?").get(req.params.id) });
 });
 
@@ -88,10 +99,19 @@ router.post("/positions", authMiddleware, requirePermission("perm_manage_structu
     parentIdValue = parent.id;
   }
 
+  const dep = db.prepare("SELECT id FROM departments WHERE id = ?").get(department_id);
+  if (!dep) return res.status(400).json({ error: "Отдел не найден" });
+
+  // SQLite treats NULLs as distinct inside UNIQUE(...), so top-level duplicates (parent_id NULL)
+  // are not caught by the table constraint and must be checked explicitly.
+  if (siblingNameTaken(dep.id, parentIdValue, name.trim())) {
+    return res.status(409).json({ error: "Такое название уже используется на этом уровне" });
+  }
+
   try {
     const info = db
       .prepare("INSERT INTO positions (department_id, parent_id, name) VALUES (?, ?, ?)")
-      .run(department_id, parentIdValue, name.trim());
+      .run(dep.id, parentIdValue, name.trim());
     const pos = db.prepare("SELECT * FROM positions WHERE id = ?").get(info.lastInsertRowid);
     res.status(201).json({ position: pos });
   } catch (e) {
@@ -119,12 +139,13 @@ router.put("/positions/:id", authMiddleware, requirePermission("perm_manage_stru
     }
   }
 
+  const newName = typeof name === "string" && name.trim() ? name.trim() : pos.name;
+  if (siblingNameTaken(pos.department_id, newParentId, newName, pos.id)) {
+    return res.status(409).json({ error: "Такое название уже используется на этом уровне" });
+  }
+
   try {
-    db.prepare("UPDATE positions SET name = COALESCE(?, name), parent_id = ? WHERE id = ?").run(
-      name || null,
-      newParentId,
-      req.params.id
-    );
+    db.prepare("UPDATE positions SET name = ?, parent_id = ? WHERE id = ?").run(newName, newParentId, req.params.id);
     res.json({ position: db.prepare("SELECT * FROM positions WHERE id = ?").get(req.params.id) });
   } catch (e) {
     res.status(409).json({ error: "Такое название уже используется на этом уровне" });
