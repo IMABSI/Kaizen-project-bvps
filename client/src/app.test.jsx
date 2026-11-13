@@ -43,7 +43,7 @@ describe("вход", () => {
     await userEvent.type(screen.getByLabelText("Пароль"), "secret1234");
     await userEvent.click(screen.getByRole("button", { name: "Войти" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/auth/login", { tabel_number: "7", password: "secret1234" }));
-    expect(await screen.findByText("Мои предложения")).toBeInTheDocument();
+    expect(await screen.findByText("Кайдзен-предложения")).toBeInTheDocument();
     expect(localStorage.getItem("kaizen_token")).toBe("tok");
   });
 
@@ -89,7 +89,7 @@ describe("активация", () => {
     await userEvent.type(screen.getByLabelText("Повторите пароль"), "password1");
     await userEvent.click(screen.getByRole("button", { name: "Задать пароль и войти" }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/auth/activate", { tabel_number: "9", activation_code: "ABCD-2345", new_password: "password1" }));
-    expect(await screen.findByText("Мои предложения")).toBeInTheDocument();
+    expect(await screen.findByText("Кайдзен-предложения")).toBeInTheDocument();
   });
 });
 
@@ -106,7 +106,7 @@ describe("доступ по ролям", () => {
   it("обычный мастер не видит админских пунктов меню и уходит с админских страниц", async () => {
     await signedIn(user());
     renderApp("/admin/users");
-    expect(await screen.findByText("Мои предложения")).toBeInTheDocument();
+    expect(await screen.findByText("Кайдзен-предложения")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Пользователи" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Моя команда" })).toBeInTheDocument();
   });

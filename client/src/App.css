@@ -158,5 +158,76 @@ input:focus, select:focus, textarea:focus, button:focus-visible, a:focus-visible
 .auth-card { width: 420px; max-width: 100%; border-top: 4px solid var(--accent); }
 .profile-card .seg, .card .seg { border-color: var(--border); }
 
-/* ---------- print (A4 cards come in the next stage; keep chrome out of print) ---------- */
-@media print { .topbar, .no-print { display: none !important; } body { background: #fff; } }
+
+
+/* ---------- kaizen form ---------- */
+.grid-2.tight { gap: 0 16px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 12px; border: 1px solid var(--border); border-radius: 99px; background: var(--surface-2); color: var(--text); font-size: 14px; font-weight: 500; text-transform: none; letter-spacing: 0; cursor: pointer; }
+.chip.on { background: var(--accent); border-color: #c78f0c; color: var(--accent-text); font-weight: 700; }
+.chip input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.chip:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+fieldset.plain { border: 0; padding: 0; margin: 0 0 4px; min-width: 0; }
+fieldset.plain legend { padding: 0; margin-bottom: 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+textarea { resize: vertical; }
+.measure-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed var(--border); }
+.measure-row > input:first-child { flex: 1 1 200px; }
+.measure-row > select { flex: 1 1 140px; }
+.measure-row .narrow-input { flex: 0 1 90px !important; }
+.delta { font-weight: 700; min-width: 56px; }
+.delta.good { color: var(--success); } .delta.bad { color: var(--danger); }
+.sticky-actions { position: sticky; bottom: 0; background: var(--bg); padding: 10px 0; border-top: 1px solid var(--border); }
+.inline-label { display: flex; gap: 8px; align-items: center; margin: 0; text-transform: none; letter-spacing: 0; }
+.seg-light { border-color: var(--border); }
+.seg-light button { color: var(--text); }
+.seg-light button.on { color: var(--accent-text); }
+.item-link { color: inherit; text-decoration: none; display: block; }
+.item-link:hover strong { text-decoration: underline; }
+
+/* ---------- photos ---------- */
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 10px 0; }
+.photo { position: relative; margin: 0; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--radius); overflow: hidden; }
+.photo img { display: block; width: 100%; height: 130px; object-fit: cover; }
+.photo figcaption { font-size: 12px; padding: 4px 6px; color: var(--muted); }
+.photo > input { margin: 0; border: 0; border-top: 1px solid var(--border); font-size: 13px; padding: 5px 6px; }
+.photo-x { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(0,0,0,.65); color: #fff; font-size: 18px; line-height: 1; cursor: pointer; }
+.photo-missing { height: 130px; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
+
+/* ---------- kaizen card (sheet) ---------- */
+.sheet { position: relative; overflow: hidden; background: #fff; color: #111; border: 1px solid var(--border); border-top: 6px solid var(--accent); padding: 20px; border-radius: var(--radius); }
+.sheet h1 { font-size: 22px; margin: 4px 0 0; }
+.sheet h3 { margin: 18px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid #c5ccd3; padding-bottom: 3px; }
+.sheet-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; position: relative; }
+.sheet-number { font-family: var(--mono); font-weight: 700; color: #5d6874; }
+.sheet .pill-sent { color: #0b5cab; } .sheet .pill-accepted { color: #1f7a3d; } .sheet .pill-rejected { color: #c62828; }
+.sheet-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 16px; margin: 14px 0; position: relative; }
+.sheet-facts dt { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #5d6874; }
+.sheet-facts dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.sheet-block, .sheet-tags, .sheet-comment { position: relative; }
+.sheet-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; }
+.sheet .muted { color: #5d6874; }
+.sheet .photo { background: #f4f6f8; border-color: #c5ccd3; }
+.sheet .photo figcaption { color: #444; }
+.sheet .photo img { height: 150px; }
+.sheet-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.tag { border: 1px solid #c5ccd3; background: #f4f6f8; font-size: 12px; padding: 2px 8px; border-radius: 99px; }
+.tag-effect { background: #fff3d1; border-color: #e0b84a; }
+.measure-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.measure-table th, .measure-table td { border: 1px solid #c5ccd3; padding: 5px 8px; text-align: left; }
+.measure-table th { background: #f4f6f8; font-size: 12px; }
+.sheet-comment { margin-top: 14px; padding: 8px 10px; background: #e3eef9; border-left: 4px solid #0b5cab; }
+.watermark { position: absolute; inset: -40%; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 46px 70px; transform: rotate(-30deg); pointer-events: none; user-select: none; z-index: 0; overflow: hidden; }
+.watermark span { font-family: var(--mono); font-size: 26px; font-weight: 700; color: rgba(60, 70, 80, .07); white-space: nowrap; }
+
+/* ---------- print: A4 ---------- */
+@page { size: A4; margin: 10mm; }
+@media print {
+  .topbar, .no-print { display: none !important; }
+  html, body { background: #fff !important; }
+  .content { max-width: none; padding: 0; }
+  .sheet { border: 0; border-top: 4px solid #000; padding: 0; }
+  .sheet, .watermark span { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sheet-block { break-inside: avoid; }
+  .photo { break-inside: avoid; }
+  .photo img { height: 120px; }
+}
