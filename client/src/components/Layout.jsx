@@ -19,7 +19,6 @@ export default function Layout() {
   const sa = user?.is_super_admin;
   const canStructure = sa || user?.perm_manage_structure;
   const canUsers = sa || user?.perm_manage_users || user?.perm_manage_admins;
-  const canKaizens = sa || user?.perm_manage_kaizens;
   const roleBadge = sa ? t("role.superAdmin") : user?.role_title || null;
 
   return (
@@ -36,9 +35,8 @@ export default function Layout() {
         </div>
         <div className={`topbar-collapse ${open ? "open" : ""}`}>
           <nav onClick={close}>
-            <NavLink to="/" end>{t("nav.myKaizens")}</NavLink>
+            <NavLink to="/" end>{t("nav.kaizens")}</NavLink>
             <NavLink to="/team">{t("nav.team")}</NavLink>
-            {canKaizens && <NavLink to="/admin/kaizens">{t("nav.allKaizens")}</NavLink>}
             {canUsers && <NavLink to="/admin/users">{t("nav.users")}</NavLink>}
             {canStructure && <NavLink to="/admin/structure">{t("nav.structure")}</NavLink>}
           </nav>
