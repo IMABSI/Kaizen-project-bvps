@@ -313,7 +313,8 @@ router.put("/:id", (req, res) => {
         k.id
       );
     }
-    if (d.measures !== undefined) {
+    // only when the request really contains `measures` (zod 4 fills defaults for missing keys)
+    if (Object.hasOwn(req.body, "measures")) {
       replaceMeasures(k.id, d.measures);
       db.prepare("UPDATE kaizens SET updated_at = datetime('now') WHERE id = ?").run(k.id);
     }

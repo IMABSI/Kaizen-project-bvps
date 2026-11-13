@@ -262,3 +262,4 @@ migrate();
 module.exports = db;
 module.exports.schemaVersion = schemaVersion;
 module.exports.LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
+module.exports.IN_MEMORY = IN_MEMORY;
