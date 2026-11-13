@@ -12,6 +12,10 @@ const ADMIN_NAME = process.env.SEED_ADMIN_NAME || "Главный админис
 const DEPARTMENTS = ["Логистика"];
 
 function run() {
+  if (process.env.NODE_ENV === "production" && !process.env.SEED_ADMIN_PASSWORD) {
+    console.error("В продакшене обязательно задайте SEED_ADMIN_PASSWORD (не используйте пароль по умолчанию).");
+    process.exit(1);
+  }
   if (ADMIN_TABEL === null) {
     console.error(`SEED_ADMIN_TABEL должен быть целым числом от ${config.TABEL_MIN} до ${config.TABEL_MAX}`);
     process.exit(1);

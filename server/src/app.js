@@ -1,3 +1,5 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -33,7 +35,16 @@ function createApp(options = {}) {
   // Behind nginx/Caddy set TRUST_PROXY=1 so rate limits see the real client IP.
   if (process.env.TRUST_PROXY) app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
 
-  app.use(helmet());
+  // Photos are loaded through the API as blobs, so img-src must allow blob:. Everything else stays 'self'.
+  // upgrade-insecure-requests is off: it would break plain-http use on a local network; HTTPS comes from the tunnel/proxy.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: { "img-src": ["'self'", "data:", "blob:"], "upgrade-insecure-requests": null },
+      },
+    })
+  );
 
   // The Vite dev proxy / production reverse proxy make the API same-origin, so CORS is
   // off unless explicitly enabled for specific origins: CORS_ORIGIN=https://a.example,https://b.example
@@ -81,6 +92,20 @@ function createApp(options = {}) {
     if (process.env.NODE_ENV !== "test") console.error(err);
     res.status(500).json({ error: "Внутренняя ошибка сервера", code: "server_error" });
   });
+
+  // One process serves both the API and the built website (client/dist), so a single tunnel/port is enough.
+  const clientDist =
+    options.clientDist === false ? null : options.clientDist || process.env.CLIENT_DIST || path.join(__dirname, "..", "..", "client", "dist");
+  const indexFile = clientDist && path.join(clientDist, "index.html");
+  if (indexFile && fs.existsSync(indexFile)) {
+    app.use("/assets", express.static(path.join(clientDist, "assets"), { immutable: true, maxAge: "30d", fallthrough: false }));
+    app.use(express.static(clientDist, { index: false, maxAge: "1h" }));
+    // Any other GET that is not the API is a page of the single-page app.
+    app.get(/^\/(?!api(\/|$)).*/, (req, res) => {
+      res.set("Cache-Control", "no-cache");
+      res.sendFile(indexFile);
+    });
+  }
 
   return app;
 }

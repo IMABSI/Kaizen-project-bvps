@@ -73,10 +73,10 @@ cd client && npm run lint && npm run build
 
 Тест словарей проверяет, что в ru/uz/en одинаковые ключи и что для каждого кода ошибки сервера есть перевод.
 
-## Продакшен
-Клиент: `npm run build` → папка `client/dist` раздаётся веб-сервером, `/api/*` проксируется на `server` (порт 4000).
-Обязательно: `NODE_ENV=production`, длинный `JWT_SECRET`, HTTPS, при прокси — `TRUST_PROXY=1`.
-См. `server/.env.example`.
+## Публичный доступ и продакшен
+После `npm run build` в `client` сервер сам отдаёт сайт и API на одном порту (4000).
+Обязательно: `NODE_ENV=production`, длинный `JWT_SECRET`, HTTPS (туннель/прокси), `TRUST_PROXY=1`, `SEED_ADMIN_PASSWORD` при первом `npm run seed`.
+Пошаговая инструкция с туннелем, резервными копиями и обновлением: [docs/PUBLIC_ACCESS.md](docs/PUBLIC_ACCESS.md). Резервная копия: `cd server && npm run backup`.
 
 ## Дальше по плану
 Карточка кайдзена (блоки «проблема / до / после / эффект», фото, сквозной номер, печать A4, водяной знак),
