@@ -3,6 +3,7 @@
 process.env.NODE_ENV = "test";
 process.env.DB_PATH = ":memory:";
 process.env.JWT_SECRET = "test-secret-not-for-production";
+process.env.UPLOAD_DIR = require("node:path").join(require("node:os").tmpdir(), `kaizen-test-uploads-${process.pid}`);
 
 const http = require("node:http");
 const bcrypt = require("bcryptjs");
@@ -16,7 +17,10 @@ const PASSWORD_HASH = bcrypt.hashSync(DEFAULT_PASSWORD, 4); // low cost: tests c
 function resetDb() {
   db.exec(`
     DELETE FROM kaizen_status_history;
+    DELETE FROM kaizen_photos;
+    DELETE FROM kaizen_measures;
     DELETE FROM kaizens;
+    UPDATE settings SET value = 'all' WHERE key = 'kaizen_visibility';
     DELETE FROM team_members;
     DELETE FROM users;
     DELETE FROM departments;
@@ -129,16 +133,33 @@ function tokenFor(user) {
   return signToken(getUser(user.id) || user);
 }
 
-function createKaizen({ author, title = "Идея", description = "Описание", status = "new", department_id } = {}) {
+/** A valid kaizen request body; override any field. */
+function kaizenBody(overrides = {}) {
+  return {
+    title: "Стеллаж для мелких деталей",
+    category: "efficiency",
+    problem_text: "Детали ищут по 10 минут",
+    after_text: "Ввели разметку ячеек",
+    ...overrides,
+  };
+}
+
+/** Inserts a kaizen straight into the DB for `author` (operator = the author unless `operator` given). */
+function createKaizen({ author, title = "Идея", status = "sent", operator, createdAt, department_id } = {}) {
+  const op = operator || { id: null, tabel_number: author.tabel_number, full_name: author.full_name, post_title: author.post_title };
+  const dept = department_id === undefined ? author.department_id : department_id;
   const info = db
-    .prepare("INSERT INTO kaizens (author_id, department_id, title, description, status) VALUES (?, ?, ?, ?, ?)")
-    .run(author.id, department_id === undefined ? author.department_id : department_id, title, description, status);
-  db.prepare("INSERT INTO kaizen_status_history (kaizen_id, status, changed_by, comment) VALUES (?, ?, ?, ?)").run(
-    info.lastInsertRowid,
-    status,
-    author.id,
-    "seed"
-  );
+    .prepare(
+      `INSERT INTO kaizens (author_id, submitter_tabel, submitter_name, submitter_post, department_id,
+         operator_member_id, operator_tabel, operator_name, operator_post, title, category, problem_text, after_text, status
+         ${createdAt ? ", created_at" : ""})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'other', 'Проблема', 'Решение', ? ${createdAt ? ", ?" : ""})`
+    )
+    .run(
+      ...[author.id, author.tabel_number, author.full_name, author.post_title, dept, op.id || null, op.tabel_number, op.full_name, op.post_title, title, status],
+      ...(createdAt ? [createdAt] : [])
+    );
+  db.prepare("INSERT INTO kaizen_status_history (kaizen_id, status, changed_by) VALUES (?, ?, ?)").run(info.lastInsertRowid, status, author.id);
   return db.prepare("SELECT * FROM kaizens WHERE id = ?").get(info.lastInsertRowid);
 }
 
@@ -152,6 +173,7 @@ module.exports = {
   createUser,
   createMember,
   createKaizen,
+  kaizenBody,
   getUser,
   tokenFor,
 };

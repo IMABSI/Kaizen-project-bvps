@@ -102,6 +102,111 @@ const MIGRATIONS = [
       `);
     },
   },
+  {
+    version: 2,
+    description: "kaizen card: rich fields, measurements, photos, settings",
+    up(d) {
+      // No real kaizens exist yet, so the simple stage-1 tables are replaced rather than converted.
+      d.exec(`
+        DROP TABLE IF EXISTS kaizen_status_history;
+        DROP TABLE IF EXISTS kaizens;
+
+        -- The kaizen number is the row id; AUTOINCREMENT guarantees a number is never reused,
+        -- even after a card is deleted (deleted cards are only hidden: deleted_at).
+        CREATE TABLE kaizens (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          author_id INTEGER NOT NULL REFERENCES users(id),          -- the master who submitted it
+          -- snapshots: a card keeps who/where it was written even if people or departments change later
+          submitter_tabel INTEGER NOT NULL,
+          submitter_name TEXT NOT NULL,
+          submitter_post TEXT,
+          department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
+          department_name TEXT,
+          operator_member_id INTEGER REFERENCES team_members(id) ON DELETE SET NULL,
+          operator_tabel INTEGER NOT NULL,                          -- author of the idea (watermark)
+          operator_name TEXT NOT NULL,
+          operator_post TEXT,
+
+          title TEXT NOT NULL,
+          category TEXT NOT NULL,
+          area TEXT,
+          equipment TEXT,
+          noticed_on TEXT,
+
+          problem_text TEXT NOT NULL,
+          before_text TEXT,
+          after_text TEXT NOT NULL,
+          benefits_text TEXT,
+          conclusion_text TEXT,
+
+          wastes TEXT NOT NULL DEFAULT '[]',
+          effects TEXT NOT NULL DEFAULT '[]',
+
+          impl_status TEXT NOT NULL DEFAULT 'idea' CHECK (impl_status IN ('idea','pilot','implemented')),
+          implemented_on TEXT,
+          effort TEXT CHECK (effort IN ('low','medium','high')),
+          currency TEXT NOT NULL DEFAULT 'UZS',
+          cost_amount REAL,
+          saving_month_amount REAL,
+          participants TEXT,
+
+          status TEXT NOT NULL DEFAULT 'sent' CHECK (status IN ('sent','accepted','rejected')),
+          admin_comment TEXT,
+          edit_allowed_until TEXT,
+          deleted_at TEXT,
+          deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE kaizen_measures (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kaizen_id INTEGER NOT NULL REFERENCES kaizens(id) ON DELETE CASCADE,
+          position INTEGER NOT NULL DEFAULT 0,
+          name TEXT NOT NULL,
+          unit TEXT,
+          before_value REAL NOT NULL,
+          after_value REAL NOT NULL,
+          better TEXT NOT NULL DEFAULT 'lower' CHECK (better IN ('lower','higher'))
+        );
+
+        CREATE TABLE kaizen_photos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kaizen_id INTEGER NOT NULL REFERENCES kaizens(id) ON DELETE CASCADE,
+          block TEXT NOT NULL CHECK (block IN ('problem','before','after','benefits','conclusion')),
+          position INTEGER NOT NULL DEFAULT 0,
+          caption TEXT,
+          mime TEXT NOT NULL,
+          size INTEGER NOT NULL,
+          file_name TEXT NOT NULL UNIQUE,
+          uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE kaizen_status_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          kaizen_id INTEGER NOT NULL REFERENCES kaizens(id) ON DELETE CASCADE,
+          status TEXT NOT NULL,
+          comment TEXT,
+          changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+          changed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        INSERT INTO settings (key, value) VALUES ('kaizen_visibility', 'all');
+
+        CREATE INDEX idx_kaizens_author ON kaizens(author_id);
+        CREATE INDEX idx_kaizens_dept ON kaizens(department_id);
+        CREATE INDEX idx_kaizens_operator ON kaizens(operator_tabel);
+        CREATE INDEX idx_measures_kaizen ON kaizen_measures(kaizen_id);
+        CREATE INDEX idx_photos_kaizen ON kaizen_photos(kaizen_id);
+        CREATE INDEX idx_history_kaizen ON kaizen_status_history(kaizen_id);
+      `);
+    },
+  },
 ];
 
 function tableExists(name) {
@@ -129,7 +234,7 @@ function retireLegacyDatabase() {
   }
 
   db.exec("PRAGMA foreign_keys = OFF;");
-  for (const t of ["kaizen_status_history", "kaizens", "users", "positions", "departments", "team_members", "settings"]) {
+  for (const t of ["kaizen_status_history", "kaizens", "users", "positions", "departments", "team_members", "settings", "kaizen_measures", "kaizen_photos"]) {
     db.exec(`DROP TABLE IF EXISTS ${t};`);
   }
   db.exec("PRAGMA foreign_keys = ON;");

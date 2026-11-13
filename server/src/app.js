@@ -8,6 +8,7 @@ const structureRoutes = require("./routes/structure");
 const userRoutes = require("./routes/users");
 const teamRoutes = require("./routes/team");
 const kaizenRoutes = require("./routes/kaizens");
+const settingsRoutes = require("./routes/settings");
 
 function limiter({ windowMs, limit, message, skipSuccessfulRequests = false }) {
   return rateLimit({
@@ -69,6 +70,7 @@ function createApp(options = {}) {
   app.use("/api/users", userRoutes);
   app.use("/api/team", teamRoutes);
   app.use("/api/kaizens", kaizenRoutes);
+  app.use("/api/settings", settingsRoutes);
 
   app.use("/api", (req, res) => res.status(404).json({ error: "Не найдено", code: "not_found" }));
 
